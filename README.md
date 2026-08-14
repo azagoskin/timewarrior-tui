@@ -47,13 +47,19 @@ and nothing changes.
 
 ### Installation
 
-`timewarrior-tui` is not yet published to crates.io or as a pre-built
-release — build it from source.
+You'll need [`timew`](https://timewarrior.net/) installed and on `PATH`
+either way.
 
-You'll need:
+Pre-compiled binaries are available on the [GitHub repo](https://github.com/azagoskin/timewarrior-tui):
 
-- [`timew`](https://timewarrior.net/) installed and on `PATH`
-- a recent stable Rust toolchain
+1. Download the archive (or `.deb`/`.rpm` package) for your platform from
+   [the latest release](https://github.com/azagoskin/timewarrior-tui/releases/latest).
+2. Unpack it (`tar xzf timewarrior-tui-*.tar.gz`, or install the `.deb`/`.rpm`
+   with your package manager).
+3. Run with `./timewarrior-tui`.
+
+If you are compiling from source, you'll need a recent stable Rust
+toolchain:
 
 ```sh
 git clone https://github.com/azagoskin/timewarrior-tui.git

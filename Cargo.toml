@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "A terminal UI for browsing and editing timewarrior time tracking data"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/azagoskin/timewarrior-tui"
+homepage = "https://github.com/azagoskin/timewarrior-tui"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -12,3 +14,22 @@ crossterm = "0.29.0"
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+
+[package.metadata.deb]
+maintainer = "Andrey Zagoskin <zagoskin.andrey@gmail.com>"
+copyright = "2026, Andrey Zagoskin"
+license-file = ["LICENSE", "0"]
+extended-description = "A terminal UI for browsing and editing timewarrior time tracking data."
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/timewarrior-tui", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/timewarrior-tui/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/timewarrior-tui", dest = "/usr/bin/timewarrior-tui", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/timewarrior-tui/README.md", mode = "644", doc = true },
+]
