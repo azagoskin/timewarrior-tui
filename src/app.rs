@@ -47,6 +47,13 @@ pub struct InputState {
     pub buffer: String,
 }
 
+/// Feedback shown to the user until the next key press.
+#[derive(Debug, Clone)]
+pub enum Message {
+    Ok(String),
+    Error(String),
+}
+
 /// Suffix that would complete `buffer`'s last whitespace-separated token
 /// into a known tag, e.g. "EET" to complete "M" into "MEET".
 pub fn tag_completion(buffer: &str, all_tags: &[String]) -> Option<String> {
@@ -59,6 +66,21 @@ pub fn tag_completion(buffer: &str, all_tags: &[String]) -> Option<String> {
         .iter()
         .find(|t| t.len() > prefix.len() && t.to_lowercase().starts_with(&lower))
         .map(|t| t[prefix.len()..].to_string())
+}
+
+fn next_index(len: usize, current: Option<usize>) -> usize {
+    match current {
+        Some(i) if i + 1 < len => i + 1,
+        Some(_) => len - 1,
+        None => 0,
+    }
+}
+
+fn previous_index(current: Option<usize>) -> usize {
+    match current {
+        Some(i) if i > 0 => i - 1,
+        _ => 0,
+    }
 }
 
 fn collect_tags(intervals: &[Interval]) -> Vec<String> {
@@ -84,14 +106,13 @@ pub struct App {
 
     pub focus: Focus,
     pub input: Option<InputState>,
-    /// (is_error, text) — shown until the next key press.
-    pub message: Option<(bool, String)>,
+    pub message: Option<Message>,
     pub should_quit: bool,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
-        let all_intervals = timew::export(None)?;
+        let all_intervals = timew::export()?;
         let all_tags = collect_tags(&all_intervals);
 
         let mut app = Self {
@@ -122,21 +143,21 @@ impl App {
         // resets the offset to 0 so the list renders from the top again.
         self.period_state.select(None);
 
-        if self.periods.is_empty() {
-            // already deselected above
-        } else if select_most_recent {
-            self.period_state.select(Some(self.periods.len() - 1));
-        } else {
-            // Try to keep looking at roughly the same point in time when
-            // switching modes (e.g. day -> week keeps the containing week selected).
-            let idx = prev_start
-                .and_then(|t| {
-                    self.periods
-                        .iter()
-                        .position(|p| p.contains(t))
-                        .or_else(|| self.periods.iter().rposition(|p| p.start <= t))
-                })
-                .unwrap_or(self.periods.len() - 1);
+        if !self.periods.is_empty() {
+            let idx = if select_most_recent {
+                self.periods.len() - 1
+            } else {
+                // Try to keep looking at roughly the same point in time when
+                // switching modes (e.g. day -> week keeps the containing week selected).
+                prev_start
+                    .and_then(|t| {
+                        self.periods
+                            .iter()
+                            .position(|p| p.contains(t))
+                            .or_else(|| self.periods.iter().rposition(|p| p.start <= t))
+                    })
+                    .unwrap_or(self.periods.len() - 1)
+            };
             self.period_state.select(Some(idx));
         }
         self.recompute_entries();
@@ -162,11 +183,15 @@ impl App {
     }
 
     pub fn selected_period(&self) -> Option<&Period> {
-        self.period_state.selected().and_then(|i| self.periods.get(i))
+        self.period_state
+            .selected()
+            .and_then(|i| self.periods.get(i))
     }
 
     pub fn selected_entry(&self) -> Option<&Interval> {
-        self.entry_state.selected().and_then(|i| self.entries.get(i))
+        self.entry_state
+            .selected()
+            .and_then(|i| self.entries.get(i))
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
@@ -194,16 +219,14 @@ impl App {
         // same row, so remember it and restore it once the reload settles.
         let prev_entry_index = self.entry_state.selected();
 
-        if let Ok(intervals) = timew::export(None) {
+        if let Ok(intervals) = timew::export() {
             self.all_tags = collect_tags(&intervals);
             self.all_intervals = intervals;
             self.rebuild_periods(false);
 
-            if let Some(i) = prev_entry_index {
-                if i < self.entries.len() {
-                    self.entry_state.select(None);
-                    self.entry_state.select(Some(i));
-                }
+            if let Some(i) = prev_entry_index.filter(|&i| i < self.entries.len()) {
+                self.entry_state.select(None);
+                self.entry_state.select(Some(i));
             }
         }
     }
@@ -214,14 +237,15 @@ impl App {
 
     /// Open the input prompt for `action`, targeting the currently selected entry.
     pub fn start_input(&mut self, action: InputAction) {
-        match self.selected_entry() {
-            Some(iv) => {
-                self.input = Some(InputState { action, interval_id: iv.id, buffer: String::new() });
-            }
-            None => {
-                self.message = Some((true, "No entry selected".to_string()));
-            }
-        }
+        let Some(iv) = self.selected_entry() else {
+            self.message = Some(Message::Error("No entry selected".to_string()));
+            return;
+        };
+        self.input = Some(InputState {
+            action,
+            interval_id: iv.id,
+            buffer: String::new(),
+        });
     }
 
     pub fn input_push(&mut self, c: char) {
@@ -246,7 +270,9 @@ impl App {
         if state.action != InputAction::Tag {
             return;
         }
-        let Some(suffix) = tag_completion(&state.buffer, &self.all_tags) else { return };
+        let Some(suffix) = tag_completion(&state.buffer, &self.all_tags) else {
+            return;
+        };
         if let Some(state) = &mut self.input {
             state.buffer.push_str(&suffix);
         }
@@ -255,10 +281,12 @@ impl App {
     /// Run the pending input command against timew, report the outcome, and
     /// refresh from timew on success.
     pub fn input_submit(&mut self) {
-        let Some(state) = self.input.take() else { return };
+        let Some(state) = self.input.take() else {
+            return;
+        };
         let text = state.buffer.trim();
         if text.is_empty() {
-            self.message = Some((true, "Empty input, nothing done".to_string()));
+            self.message = Some(Message::Error("Empty input, nothing done".to_string()));
             return;
         }
 
@@ -277,11 +305,18 @@ impl App {
 
         match result {
             Ok(()) => {
-                self.message = Some((false, format!("{} succeeded for @{}", state.action.verb(), state.interval_id)));
+                self.message = Some(Message::Ok(format!(
+                    "{} succeeded for @{}",
+                    state.action.verb(),
+                    state.interval_id
+                )));
                 self.refresh();
             }
             Err(e) => {
-                self.message = Some((true, format!("{} failed: {e}", state.action.verb())));
+                self.message = Some(Message::Error(format!(
+                    "{} failed: {e}",
+                    state.action.verb()
+                )));
             }
         }
     }
@@ -289,18 +324,18 @@ impl App {
     /// Split the selected entry into two equal adjacent intervals (timew split).
     pub fn split_selected(&mut self) {
         let Some(iv) = self.selected_entry() else {
-            self.message = Some((true, "No entry selected".to_string()));
+            self.message = Some(Message::Error("No entry selected".to_string()));
             return;
         };
         let id_arg = format!("@{}", iv.id);
 
         match timew::run(&["split", &id_arg]) {
             Ok(()) => {
-                self.message = Some((false, format!("Split succeeded for {id_arg}")));
+                self.message = Some(Message::Ok(format!("Split succeeded for {id_arg}")));
                 self.refresh();
             }
             Err(e) => {
-                self.message = Some((true, format!("Split failed: {e}")));
+                self.message = Some(Message::Error(format!("Split failed: {e}")));
             }
         }
     }
@@ -311,11 +346,7 @@ impl App {
                 if self.periods.is_empty() {
                     return;
                 }
-                let i = match self.period_state.selected() {
-                    Some(i) if i + 1 < self.periods.len() => i + 1,
-                    Some(_) => self.periods.len() - 1,
-                    None => 0,
-                };
+                let i = next_index(self.periods.len(), self.period_state.selected());
                 self.period_state.select(Some(i));
                 self.recompute_entries();
             }
@@ -323,11 +354,7 @@ impl App {
                 if self.entries.is_empty() {
                     return;
                 }
-                let i = match self.entry_state.selected() {
-                    Some(i) if i + 1 < self.entries.len() => i + 1,
-                    Some(_) => self.entries.len() - 1,
-                    None => 0,
-                };
+                let i = next_index(self.entries.len(), self.entry_state.selected());
                 self.entry_state.select(Some(i));
             }
         }
@@ -339,10 +366,7 @@ impl App {
                 if self.periods.is_empty() {
                     return;
                 }
-                let i = match self.period_state.selected() {
-                    Some(i) if i > 0 => i - 1,
-                    _ => 0,
-                };
+                let i = previous_index(self.period_state.selected());
                 self.period_state.select(Some(i));
                 self.recompute_entries();
             }
@@ -350,10 +374,7 @@ impl App {
                 if self.entries.is_empty() {
                     return;
                 }
-                let i = match self.entry_state.selected() {
-                    Some(i) if i > 0 => i - 1,
-                    _ => 0,
-                };
+                let i = previous_index(self.entry_state.selected());
                 self.entry_state.select(Some(i));
             }
         }

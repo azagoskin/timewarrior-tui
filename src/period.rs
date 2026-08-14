@@ -46,8 +46,7 @@ impl Period {
 fn local_midnight(date: NaiveDate) -> DateTime<Local> {
     let naive = date.and_hms_opt(0, 0, 0).expect("valid time");
     match Local.from_local_datetime(&naive) {
-        chrono::LocalResult::Single(dt) => dt,
-        chrono::LocalResult::Ambiguous(dt, _) => dt,
+        chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => dt,
         chrono::LocalResult::None => {
             // DST gap at midnight (rare): fall back to UTC-anchored conversion.
             Local.from_utc_datetime(&naive)
@@ -79,8 +78,18 @@ fn build_day_periods(intervals: &[Interval]) -> Vec<Period> {
         .map(|(d, total)| {
             let start = local_midnight(d);
             let end = start + Duration::days(1);
-            let label = format!("{} | {} | {}", d.format("%Y"), d.format("%d-%m"), d.format("%A"));
-            Period { label, start, end, total }
+            let label = format!(
+                "{} | {} | {}",
+                d.format("%Y"),
+                d.format("%d-%m"),
+                d.format("%A")
+            );
+            Period {
+                label,
+                start,
+                end,
+                total,
+            }
         })
         .collect()
 }
@@ -89,7 +98,9 @@ fn build_week_periods(intervals: &[Interval]) -> Vec<Period> {
     let mut totals: BTreeMap<(i32, u32), Duration> = BTreeMap::new();
     for iv in intervals {
         let iso = iv.start.iso_week();
-        *totals.entry((iso.year(), iso.week())).or_insert_with(Duration::zero) += iv.duration();
+        *totals
+            .entry((iso.year(), iso.week()))
+            .or_insert_with(Duration::zero) += iv.duration();
     }
     totals
         .into_iter()
@@ -98,8 +109,18 @@ fn build_week_periods(intervals: &[Interval]) -> Vec<Period> {
             let start = local_midnight(monday);
             let end = start + Duration::days(7);
             let sunday = monday + Duration::days(6);
-            let label = format!("{} | {} - {}", monday.format("%Y"), monday.format("%m-%d"), sunday.format("%m-%d"));
-            Some(Period { label, start, end, total })
+            let label = format!(
+                "{} | {} - {}",
+                monday.format("%Y"),
+                monday.format("%m-%d"),
+                sunday.format("%m-%d")
+            );
+            Some(Period {
+                label,
+                start,
+                end,
+                total,
+            })
         })
         .collect()
 }
@@ -108,7 +129,9 @@ fn build_month_periods(intervals: &[Interval]) -> Vec<Period> {
     let mut totals: BTreeMap<(i32, u32), Duration> = BTreeMap::new();
     for iv in intervals {
         let d = iv.start.date_naive();
-        *totals.entry((d.year(), d.month())).or_insert_with(Duration::zero) += iv.duration();
+        *totals
+            .entry((d.year(), d.month()))
+            .or_insert_with(Duration::zero) += iv.duration();
     }
     totals
         .into_iter()
@@ -122,7 +145,12 @@ fn build_month_periods(intervals: &[Interval]) -> Vec<Period> {
             };
             let end = local_midnight(next);
             let label = format!("{} | {}", first.format("%Y"), first.format("%B"));
-            Some(Period { label, start, end, total })
+            Some(Period {
+                label,
+                start,
+                end,
+                total,
+            })
         })
         .collect()
 }
@@ -140,7 +168,12 @@ fn build_year_periods(intervals: &[Interval]) -> Vec<Period> {
             let start = local_midnight(first);
             let end = local_midnight(NaiveDate::from_ymd_opt(year + 1, 1, 1)?);
             let label = format!("{year}");
-            Some(Period { label, start, end, total })
+            Some(Period {
+                label,
+                start,
+                end,
+                total,
+            })
         })
         .collect()
 }

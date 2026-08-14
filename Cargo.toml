@@ -2,6 +2,8 @@
 name = "timewarrior-tui"
 version = "0.1.0"
 edition = "2021"
+description = "A terminal UI for browsing and editing timewarrior time tracking data"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0.104"

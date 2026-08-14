@@ -1,54 +1,80 @@
-# timewarrior-tui
+# `timewarrior-tui`
 
-A console TUI tool — a wrapper around [timewarrior](https://timewarrior.net/),
-modeled after [taskwarrior-tui](https://github.com/kdheepak/taskwarrior-tui).
+[![License](https://img.shields.io/github/license/azagoskin/timewarrior-tui)](https://github.com/azagoskin/timewarrior-tui/blob/main/LICENSE)
+[![Rust](https://img.shields.io/github/languages/top/azagoskin/timewarrior-tui)](https://github.com/azagoskin/timewarrior-tui)
 
-MVP: display timewarrior records (intervals) as a table with details for the
-selected entry, with switchable day/week/month/year modes and a period
-picker on the left.
+A Terminal User Interface (TUI) for [Timewarrior](https://timewarrior.net/), modeled after [`taskwarrior-tui`](https://github.com/kdheepak/taskwarrior-tui).
 
-## Requirements
+### Features
 
-- `timew` (timewarrior) installed and on `PATH`.
-- Rust/Cargo.
+- day / week / month / year views, with a period picker on the left
+- entries grouped by day, with per-day totals
+- edit entries without leaving the terminal: annotate, tag, lengthen, shorten, move, split
+- tag autocomplete
+- colors based on timewarrior tags; active interval highlighted
 
-## Build and run
-
-```sh
-cargo run --release
-```
-
-On startup the full history is loaded via `timew export`. The top bar
-selects the grouping mode (day/week/month/year), plus a Help tab with the
-key reference. The left column picks a specific period within the current
-mode (only periods that have entries; sorted oldest to newest top to
-bottom, with the most recent period selected by default at the bottom, and
-its total duration shown alongside), and the right panel shows the entries
-for the selected period, oldest to newest. Consecutive entries on the same
-day are shown as a group: the date/weekday is only printed on the first row
-of the day, and the `Total` column is only filled in on that day's last row.
-
-## Keys
+### Documentation
 
 See the **Help** tab (`5`) inside the app for the full key reference.
 
-The active (still-running) interval is highlighted in green. Switching
-modes preserves context — the period containing the previously selected
-date is selected automatically.
+<details>
+<summary>Editing entries</summary>
 
-## Editing entries
+`a`, `t`, `l`, `s`, `m` open a small input prompt that runs the corresponding
+timewarrior command against the currently selected entry; `p` runs
+immediately, with no prompt:
 
-`a`, `t`, `l`, `s`, `m` open a small input prompt that runs the
-corresponding timewarrior command against the currently selected entry:
+| Key | Action              | timew equivalent                           |
+| --- | ------------------- | ------------------------------------------- |
+| `a` | add an annotation   | `timew annotate @id <text>`                 |
+| `t` | add tag(s)          | `timew tag @id <tag>...` (space-separated)   |
+| `l` | lengthen            | `timew lengthen @id <duration>`             |
+| `s` | shorten             | `timew shorten @id <duration>`              |
+| `m` | move                | `timew move @id <date>`                     |
+| `p` | split in two        | `timew split @id`                           |
 
-| Key | Command            | timew equivalent    |
-|-----|---------------------|----------------------|
-| `a` | add an annotation   | `timew annotate @id <text>` |
-| `t` | add tag(s)          | `timew tag @id <tag>...` (space-separated) |
-| `l` | lengthen            | `timew lengthen @id <duration>` |
-| `s` | shorten             | `timew shorten @id <duration>` |
-| `m` | move                | `timew move @id <date>` |
+While typing a tag, `Tab` autocompletes it against tags already used
+elsewhere in your history (shown as a grey suggestion as you type).
 
-Press `Enter` to submit or `Esc` to cancel. On success the data is
-reloaded from timew and a confirmation is shown; if timew rejects the
-command, its error message is shown instead and nothing changes.
+Press `Enter` to submit or `Esc` to cancel. On success the data is reloaded
+from timew, the row you were on stays selected, and a confirmation is
+shown; if timew rejects the command, its error message is shown instead
+and nothing changes.
+
+</details>
+
+### Installation
+
+`timewarrior-tui` is not yet published to crates.io or as a pre-built
+release — build it from source.
+
+You'll need:
+
+- [`timew`](https://timewarrior.net/) installed and on `PATH`
+- a recent stable Rust toolchain
+
+```sh
+git clone https://github.com/azagoskin/timewarrior-tui.git
+cd timewarrior-tui
+cargo build --release
+./target/release/timewarrior-tui
+```
+
+### Configuration
+
+`timewarrior-tui` reads your existing `timew` data directly (via
+`timew export`) — there is no separate config file. Every editing command
+(`a`/`t`/`l`/`s`/`m`/`p`) shells out to the real `timew` CLI, so anything
+`timew` itself accepts works here too, and `timew undo` will undo it.
+
+### References / Resources
+
+- <https://timewarrior.net/>
+- <https://github.com/GothenburgBitFactory/timewarrior>
+- <https://github.com/kdheepak/taskwarrior-tui>
+- <https://github.com/ratatui/ratatui>
+- <https://github.com/crossterm-rs/crossterm>
+
+### License
+
+GPL-3.0 — see [LICENSE](LICENSE).

@@ -40,15 +40,10 @@ fn parse_timew_datetime(s: &str) -> Result<DateTime<Local>> {
     Ok(dt.with_timezone(&Utc).with_timezone(&Local))
 }
 
-/// Fetch time tracking intervals from timewarrior via `timew export [filter]`.
-pub fn export(filter: Option<&str>) -> Result<Vec<Interval>> {
-    let mut cmd = Command::new("timew");
-    cmd.arg("export");
-    if let Some(f) = filter {
-        cmd.arg(f);
-    }
-
-    let output = cmd
+/// Fetch the full time tracking history from timewarrior via `timew export`.
+pub fn export() -> Result<Vec<Interval>> {
+    let output = Command::new("timew")
+        .arg("export")
         .output()
         .context("failed to run `timew`; is timewarrior installed and on PATH?")?;
 
