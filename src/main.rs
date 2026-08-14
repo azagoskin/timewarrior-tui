@@ -34,6 +34,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                         KeyCode::Esc => app.input_cancel(),
                         KeyCode::Enter => app.input_submit(),
                         KeyCode::Backspace => app.input_backspace(),
+                        KeyCode::Tab => app.input_autocomplete(),
                         KeyCode::Char(c) => app.input_push(c),
                         _ => {}
                     }

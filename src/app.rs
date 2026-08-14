@@ -47,8 +47,33 @@ pub struct InputState {
     pub buffer: String,
 }
 
+/// Suffix that would complete `buffer`'s last whitespace-separated token
+/// into a known tag, e.g. "EET" to complete "M" into "MEET".
+pub fn tag_completion(buffer: &str, all_tags: &[String]) -> Option<String> {
+    let prefix = buffer.rsplit(' ').next().unwrap_or("");
+    if prefix.is_empty() {
+        return None;
+    }
+    let lower = prefix.to_lowercase();
+    all_tags
+        .iter()
+        .find(|t| t.len() > prefix.len() && t.to_lowercase().starts_with(&lower))
+        .map(|t| t[prefix.len()..].to_string())
+}
+
+fn collect_tags(intervals: &[Interval]) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for iv in intervals {
+        for t in &iv.tags {
+            set.insert(t.clone());
+        }
+    }
+    set.into_iter().collect()
+}
+
 pub struct App {
     pub all_intervals: Vec<Interval>,
+    pub all_tags: Vec<String>,
 
     pub mode: Mode,
     pub periods: Vec<Period>,
@@ -67,9 +92,11 @@ pub struct App {
 impl App {
     pub fn new() -> Result<Self> {
         let all_intervals = timew::export(None)?;
+        let all_tags = collect_tags(&all_intervals);
 
         let mut app = Self {
             all_intervals,
+            all_tags,
             mode: Mode::Day,
             periods: Vec::new(),
             period_state: ListState::default(),
@@ -154,6 +181,7 @@ impl App {
 
     pub fn refresh(&mut self) {
         if let Ok(intervals) = timew::export(None) {
+            self.all_tags = collect_tags(&intervals);
             self.all_intervals = intervals;
             self.rebuild_periods(false);
         }
@@ -189,6 +217,18 @@ impl App {
 
     pub fn input_cancel(&mut self) {
         self.input = None;
+    }
+
+    /// Complete the tag currently being typed, if it uniquely matches a known tag.
+    pub fn input_autocomplete(&mut self) {
+        let Some(state) = &self.input else { return };
+        if state.action != InputAction::Tag {
+            return;
+        }
+        let Some(suffix) = tag_completion(&state.buffer, &self.all_tags) else { return };
+        if let Some(state) = &mut self.input {
+            state.buffer.push_str(&suffix);
+        }
     }
 
     /// Run the pending input command against timew, report the outcome, and

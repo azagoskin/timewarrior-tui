@@ -1,4 +1,4 @@
-use crate::app::{App, Focus, InputState};
+use crate::app::{self, App, Focus, InputAction, InputState};
 use crate::period::{Mode, Period};
 use crate::timew::Interval;
 use chrono::{Datelike, NaiveDate};
@@ -99,7 +99,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_details(frame, app, inner[1]);
 
     if let Some(input) = &app.input {
-        draw_input_popup(frame, frame.area(), input);
+        draw_input_popup(frame, frame.area(), input, &app.all_tags);
     } else if let Some((is_error, message)) = &app.message {
         draw_message_popup(frame, frame.area(), *is_error, message);
     }
@@ -113,14 +113,24 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState) {
+fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState, all_tags: &[String]) {
     let popup = centered_rect(60, 4, area);
     frame.render_widget(Clear, popup);
 
-    let text = vec![
-        Line::from(vec![Span::styled("> ", Style::default().fg(Color::Yellow)), Span::raw(input.buffer.as_str())]),
-        Line::from(Span::styled("Enter: submit   Esc: cancel", Style::default().fg(Color::DarkGray))),
-    ];
+    let suggestion = if input.action == InputAction::Tag { app::tag_completion(&input.buffer, all_tags) } else { None };
+
+    let mut first_line = vec![Span::styled("> ", Style::default().fg(Color::Yellow)), Span::raw(input.buffer.as_str())];
+    if let Some(suffix) = &suggestion {
+        first_line.push(Span::styled(suffix.clone(), Style::default().fg(Color::DarkGray)));
+    }
+
+    let hint = if suggestion.is_some() {
+        "Enter: submit   Tab: autocomplete   Esc: cancel"
+    } else {
+        "Enter: submit   Esc: cancel"
+    };
+
+    let text = vec![Line::from(first_line), Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray)))];
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow))
