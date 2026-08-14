@@ -5,6 +5,8 @@
 
 A Terminal User Interface (TUI) for [Timewarrior](https://timewarrior.net/), modeled after [`taskwarrior-tui`](https://github.com/kdheepak/taskwarrior-tui).
 
+![screenshot](assets/screenshot.png)
+
 ### Features
 
 - day / week / month / year views, with a period picker on the left
