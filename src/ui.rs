@@ -1,7 +1,7 @@
 use crate::app::{self, App, Focus, InputAction, InputState};
 use crate::period::{Mode, Period};
 use crate::timew::Interval;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, Weekday};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -51,6 +51,7 @@ fn row_for(interval: &Interval, show_date: bool, day_total: Option<chrono::Durat
     };
 
     Row::new(vec![
+        Cell::from(format!("@{}", interval.id)),
         Cell::from(date),
         Cell::from(day),
         Cell::from(start),
@@ -179,6 +180,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         line("l", "lengthen the interval (timew lengthen)"),
         line("s", "shorten the interval (timew shorten)"),
         line("m", "move the interval (timew move)"),
+        line("p", "split the interval in two (timew split)"),
         Line::from(""),
         Line::from(Span::styled("Other", Style::default().add_modifier(Modifier::BOLD))),
         line("r", "refresh data from timew"),
@@ -219,8 +221,14 @@ fn draw_periods(frame: &mut Frame, app: &mut App, area: Rect) {
                 label.truncate(label_width.saturating_sub(1));
                 label.push('…');
             }
+            // In Day mode, tint Mondays slightly so week boundaries are easier to spot.
+            let label_style = if app.mode == Mode::Day && p.start.weekday() == Weekday::Mon {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
             let line = Line::from(vec![
-                Span::raw(format!("{label:<label_width$}")),
+                Span::styled(format!("{label:<label_width$}"), label_style),
                 Span::raw(" "),
                 Span::styled(format!("{dur:>dur_width$}"), Style::default().fg(Color::Yellow)),
             ]);
@@ -243,7 +251,7 @@ fn draw_periods(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let active = app.focus == Focus::Entries;
-    let header = Row::new(vec!["Date", "Day", "Start", "End", "Time", "Total", "Annotation", "Tags"])
+    let header = Row::new(vec!["Id", "Date", "Day", "Start", "End", "Time", "Total", "Annotation", "Tags"])
         .style(Style::default().add_modifier(Modifier::BOLD))
         .bottom_margin(1);
 
@@ -266,6 +274,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let widths = [
+        Constraint::Length(6),
         Constraint::Length(10),
         Constraint::Length(4),
         Constraint::Length(5),

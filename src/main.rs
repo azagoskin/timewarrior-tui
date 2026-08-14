@@ -62,6 +62,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('l') => app.start_input(InputAction::Lengthen),
                     KeyCode::Char('s') => app.start_input(InputAction::Shorten),
                     KeyCode::Char('m') => app.start_input(InputAction::Move),
+                    KeyCode::Char('p') => app.split_selected(),
                     _ => {}
                 }
             }

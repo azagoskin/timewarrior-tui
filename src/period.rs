@@ -55,18 +55,6 @@ fn local_midnight(date: NaiveDate) -> DateTime<Local> {
     }
 }
 
-fn weekday_short(w: Weekday) -> &'static str {
-    match w {
-        Weekday::Mon => "Mon",
-        Weekday::Tue => "Tue",
-        Weekday::Wed => "Wed",
-        Weekday::Thu => "Thu",
-        Weekday::Fri => "Fri",
-        Weekday::Sat => "Sat",
-        Weekday::Sun => "Sun",
-    }
-}
-
 /// Group intervals into periods for the given mode, sorted oldest-first.
 pub fn build_periods(intervals: &[Interval], mode: Mode) -> Vec<Period> {
     let mut periods = match mode {
@@ -91,7 +79,7 @@ fn build_day_periods(intervals: &[Interval]) -> Vec<Period> {
         .map(|(d, total)| {
             let start = local_midnight(d);
             let end = start + Duration::days(1);
-            let label = format!("{} {}", d.format("%Y-%m-%d"), weekday_short(d.weekday()));
+            let label = format!("{} | {} | {}", d.format("%Y"), d.format("%d-%m"), d.format("%A"));
             Period { label, start, end, total }
         })
         .collect()
@@ -133,7 +121,7 @@ fn build_month_periods(intervals: &[Interval]) -> Vec<Period> {
                 NaiveDate::from_ymd_opt(year, month + 1, 1)?
             };
             let end = local_midnight(next);
-            let label = format!("{}", first.format("%Y %B"));
+            let label = format!("{} | {}", first.format("%Y"), first.format("%B"));
             Some(Period { label, start, end, total })
         })
         .collect()

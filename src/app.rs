@@ -115,8 +115,15 @@ impl App {
         let prev_start = self.selected_period().map(|p| p.start);
         self.periods = period::build_periods(&self.all_intervals, self.mode);
 
+        // Reset the scroll offset before re-selecting: `select(Some(_))` alone
+        // leaves a stale offset from whatever mode/period was shown before,
+        // which for a shorter list can scroll straight past every earlier
+        // entry and show only the selected (often last) row. `select(None)`
+        // resets the offset to 0 so the list renders from the top again.
+        self.period_state.select(None);
+
         if self.periods.is_empty() {
-            self.period_state.select(None);
+            // already deselected above
         } else if select_most_recent {
             self.period_state.select(Some(self.periods.len() - 1));
         } else {
@@ -145,9 +152,11 @@ impl App {
                 .collect(),
             None => Vec::new(),
         };
-        if self.entries.is_empty() {
-            self.entry_state.select(None);
-        } else {
+        // Reset the offset (see the comment in `rebuild_periods`) before
+        // re-selecting, so a switch to a shorter entry list doesn't leave
+        // the view scrolled past everything.
+        self.entry_state.select(None);
+        if !self.entries.is_empty() {
             self.entry_state.select(Some(0));
         }
     }
@@ -180,10 +189,22 @@ impl App {
     }
 
     pub fn refresh(&mut self) {
+        // rebuild_periods()/recompute_entries() reset the entry selection to
+        // the top of the list; after an edit command we'd rather stay on the
+        // same row, so remember it and restore it once the reload settles.
+        let prev_entry_index = self.entry_state.selected();
+
         if let Ok(intervals) = timew::export(None) {
             self.all_tags = collect_tags(&intervals);
             self.all_intervals = intervals;
             self.rebuild_periods(false);
+
+            if let Some(i) = prev_entry_index {
+                if i < self.entries.len() {
+                    self.entry_state.select(None);
+                    self.entry_state.select(Some(i));
+                }
+            }
         }
     }
 
@@ -261,6 +282,25 @@ impl App {
             }
             Err(e) => {
                 self.message = Some((true, format!("{} failed: {e}", state.action.verb())));
+            }
+        }
+    }
+
+    /// Split the selected entry into two equal adjacent intervals (timew split).
+    pub fn split_selected(&mut self) {
+        let Some(iv) = self.selected_entry() else {
+            self.message = Some((true, "No entry selected".to_string()));
+            return;
+        };
+        let id_arg = format!("@{}", iv.id);
+
+        match timew::run(&["split", &id_arg]) {
+            Ok(()) => {
+                self.message = Some((false, format!("Split succeeded for {id_arg}")));
+                self.refresh();
+            }
+            Err(e) => {
+                self.message = Some((true, format!("Split failed: {e}")));
             }
         }
     }
