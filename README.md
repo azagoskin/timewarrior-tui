@@ -19,30 +19,36 @@ cargo run --release
 ```
 
 On startup the full history is loaded via `timew export`. The top bar
-selects the grouping mode (day/week/month/year), the left column picks a
-specific period within that mode (only periods that have entries; sorted
-oldest to newest top to bottom, with the most recent period selected by
-default at the bottom), and the right panel shows the entries for the
-selected period, grouped by day (oldest to newest within each day), with a
-totals row after each day.
-
-The total duration in the left column is only shown for months and years;
-not for days and weeks (a day is just one entry anyway, and a week's total
-is visible from the daily totals on the right).
+selects the grouping mode (day/week/month/year), plus a Help tab with the
+key reference. The left column picks a specific period within the current
+mode (only periods that have entries; sorted oldest to newest top to
+bottom, with the most recent period selected by default at the bottom, and
+its total duration shown alongside), and the right panel shows the entries
+for the selected period, oldest to newest. Consecutive entries on the same
+day are shown as a group: the date/weekday is only printed on the first row
+of the day, and the `Total` column is only filled in on that day's last row.
 
 ## Keys
 
-| Key                     | Action                                       |
-|--------------------------|-----------------------------------------------|
-| `1` `2` `3` `4`           | mode: day / week / month / year               |
-| `Tab`, `h`/`←`, `l`/`→`   | switch focus between the period list and entries |
-| `j` / `↓`                 | move down in the active pane                  |
-| `k` / `↑`                 | move up in the active pane                    |
-| `g` / `Home`              | jump to the top of the list                   |
-| `G` / `End`               | jump to the bottom of the list                |
-| `r`                       | refresh data from timew                       |
-| `q` / `Esc`               | quit                                          |
+See the **Help** tab (`5`) inside the app for the full key reference.
 
 The active (still-running) interval is highlighted in green. Switching
 modes preserves context — the period containing the previously selected
 date is selected automatically.
+
+## Editing entries
+
+`a`, `t`, `l`, `s`, `m` open a small input prompt that runs the
+corresponding timewarrior command against the currently selected entry:
+
+| Key | Command            | timew equivalent    |
+|-----|---------------------|----------------------|
+| `a` | add an annotation   | `timew annotate @id <text>` |
+| `t` | add tag(s)          | `timew tag @id <tag>...` (space-separated) |
+| `l` | lengthen            | `timew lengthen @id <duration>` |
+| `s` | shorten             | `timew shorten @id <duration>` |
+| `m` | move                | `timew move @id <date>` |
+
+Press `Enter` to submit or `Esc` to cancel. On success the data is
+reloaded from timew and a confirmation is shown; if timew rejects the
+command, its error message is shown instead and nothing changes.

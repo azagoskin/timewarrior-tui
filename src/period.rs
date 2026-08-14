@@ -8,10 +8,11 @@ pub enum Mode {
     Week,
     Month,
     Year,
+    Help,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 4] = [Mode::Day, Mode::Week, Mode::Month, Mode::Year];
+    pub const ALL: [Mode; 5] = [Mode::Day, Mode::Week, Mode::Month, Mode::Year, Mode::Help];
 
     pub fn title(&self) -> &'static str {
         match self {
@@ -19,6 +20,7 @@ impl Mode {
             Mode::Week => "Week",
             Mode::Month => "Month",
             Mode::Year => "Year",
+            Mode::Help => "Help",
         }
     }
 
@@ -72,6 +74,7 @@ pub fn build_periods(intervals: &[Interval], mode: Mode) -> Vec<Period> {
         Mode::Week => build_week_periods(intervals),
         Mode::Month => build_month_periods(intervals),
         Mode::Year => build_year_periods(intervals),
+        Mode::Help => Vec::new(),
     };
     periods.sort_by_key(|p| p.start);
     periods
@@ -107,7 +110,7 @@ fn build_week_periods(intervals: &[Interval]) -> Vec<Period> {
             let start = local_midnight(monday);
             let end = start + Duration::days(7);
             let sunday = monday + Duration::days(6);
-            let label = format!("{} – {}", monday.format("%Y-%m-%d"), sunday.format("%Y-%m-%d"));
+            let label = format!("{} | {} - {}", monday.format("%Y"), monday.format("%m-%d"), sunday.format("%m-%d"));
             Some(Period { label, start, end, total })
         })
         .collect()

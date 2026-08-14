@@ -77,3 +77,23 @@ pub fn export(filter: Option<&str>) -> Result<Vec<Interval>> {
 
     Ok(intervals)
 }
+
+/// Run a `timew` subcommand (e.g. `["annotate", "@5", "some text"]`) and
+/// report failures with timewarrior's own error message.
+pub fn run(args: &[&str]) -> std::result::Result<(), String> {
+    let output = Command::new("timew")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run `timew`: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err(format!("timew exited with {}", output.status))
+        } else {
+            Err(stderr)
+        }
+    }
+}

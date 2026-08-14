@@ -1,7 +1,6 @@
 use crate::period::{self, Mode, Period};
 use crate::timew::{self, Interval};
 use anyhow::Result;
-use chrono::NaiveDate;
 use ratatui::widgets::{ListState, TableState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,14 +9,42 @@ pub enum Focus {
     Entries,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputAction {
+    Annotate,
+    Tag,
+    Lengthen,
+    Shorten,
+    Move,
+}
+
+impl InputAction {
+    pub fn prompt(&self) -> &'static str {
+        match self {
+            InputAction::Annotate => "Annotation",
+            InputAction::Tag => "Tag(s)",
+            InputAction::Lengthen => "Lengthen by",
+            InputAction::Shorten => "Shorten by",
+            InputAction::Move => "Move to",
+        }
+    }
+
+    fn verb(&self) -> &'static str {
+        match self {
+            InputAction::Annotate => "Annotate",
+            InputAction::Tag => "Tag",
+            InputAction::Lengthen => "Lengthen",
+            InputAction::Shorten => "Shorten",
+            InputAction::Move => "Move",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub enum EntryRow {
-    Interval(Interval),
-    DaySummary {
-        date: NaiveDate,
-        total: chrono::Duration,
-        count: usize,
-    },
+pub struct InputState {
+    pub action: InputAction,
+    pub interval_id: u64,
+    pub buffer: String,
 }
 
 pub struct App {
@@ -28,11 +55,12 @@ pub struct App {
     pub period_state: ListState,
 
     pub entries: Vec<Interval>,
-    pub display_rows: Vec<EntryRow>,
     pub entry_state: TableState,
 
     pub focus: Focus,
-    pub status: String,
+    pub input: Option<InputState>,
+    /// (is_error, text) — shown until the next key press.
+    pub message: Option<(bool, String)>,
     pub should_quit: bool,
 }
 
@@ -46,10 +74,10 @@ impl App {
             periods: Vec::new(),
             period_state: ListState::default(),
             entries: Vec::new(),
-            display_rows: Vec::new(),
             entry_state: TableState::default(),
             focus: Focus::Entries,
-            status: String::new(),
+            input: None,
+            message: None,
             should_quit: false,
         };
         app.rebuild_periods(true);
@@ -90,8 +118,7 @@ impl App {
                 .collect(),
             None => Vec::new(),
         };
-        self.display_rows = build_display_rows(&self.entries);
-        if self.display_rows.is_empty() {
+        if self.entries.is_empty() {
             self.entry_state.select(None);
         } else {
             self.entry_state.select(Some(0));
@@ -103,10 +130,7 @@ impl App {
     }
 
     pub fn selected_entry(&self) -> Option<&Interval> {
-        self.entry_state.selected().and_then(|i| self.display_rows.get(i)).and_then(|row| match row {
-            EntryRow::Interval(iv) => Some(iv),
-            EntryRow::DaySummary { .. } => None,
-        })
+        self.entry_state.selected().and_then(|i| self.entries.get(i))
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
@@ -115,7 +139,6 @@ impl App {
         }
         self.mode = mode;
         self.rebuild_periods(false);
-        self.status = format!("mode: {}", mode.title());
     }
 
     pub fn toggle_focus(&mut self) {
@@ -130,14 +153,74 @@ impl App {
     }
 
     pub fn refresh(&mut self) {
-        match timew::export(None) {
-            Ok(intervals) => {
-                self.all_intervals = intervals;
-                self.rebuild_periods(false);
-                self.status = "refreshed".to_string();
+        if let Ok(intervals) = timew::export(None) {
+            self.all_intervals = intervals;
+            self.rebuild_periods(false);
+        }
+    }
+
+    pub fn clear_message(&mut self) {
+        self.message = None;
+    }
+
+    /// Open the input prompt for `action`, targeting the currently selected entry.
+    pub fn start_input(&mut self, action: InputAction) {
+        match self.selected_entry() {
+            Some(iv) => {
+                self.input = Some(InputState { action, interval_id: iv.id, buffer: String::new() });
+            }
+            None => {
+                self.message = Some((true, "No entry selected".to_string()));
+            }
+        }
+    }
+
+    pub fn input_push(&mut self, c: char) {
+        if let Some(state) = &mut self.input {
+            state.buffer.push(c);
+        }
+    }
+
+    pub fn input_backspace(&mut self) {
+        if let Some(state) = &mut self.input {
+            state.buffer.pop();
+        }
+    }
+
+    pub fn input_cancel(&mut self) {
+        self.input = None;
+    }
+
+    /// Run the pending input command against timew, report the outcome, and
+    /// refresh from timew on success.
+    pub fn input_submit(&mut self) {
+        let Some(state) = self.input.take() else { return };
+        let text = state.buffer.trim();
+        if text.is_empty() {
+            self.message = Some((true, "Empty input, nothing done".to_string()));
+            return;
+        }
+
+        let id_arg = format!("@{}", state.interval_id);
+        let result = match state.action {
+            InputAction::Annotate => timew::run(&["annotate", &id_arg, text]),
+            InputAction::Tag => {
+                let mut args = vec!["tag", id_arg.as_str()];
+                args.extend(text.split_whitespace());
+                timew::run(&args)
+            }
+            InputAction::Lengthen => timew::run(&["lengthen", &id_arg, text]),
+            InputAction::Shorten => timew::run(&["shorten", &id_arg, text]),
+            InputAction::Move => timew::run(&["move", &id_arg, text]),
+        };
+
+        match result {
+            Ok(()) => {
+                self.message = Some((false, format!("{} succeeded for @{}", state.action.verb(), state.interval_id)));
+                self.refresh();
             }
             Err(e) => {
-                self.status = format!("error: {e}");
+                self.message = Some((true, format!("{} failed: {e}", state.action.verb())));
             }
         }
     }
@@ -157,13 +240,14 @@ impl App {
                 self.recompute_entries();
             }
             Focus::Entries => {
-                let Some(mut i) = self.entry_state.selected() else { return };
-                while i + 1 < self.display_rows.len() {
-                    i += 1;
-                    if matches!(self.display_rows[i], EntryRow::Interval(_)) {
-                        break;
-                    }
+                if self.entries.is_empty() {
+                    return;
                 }
+                let i = match self.entry_state.selected() {
+                    Some(i) if i + 1 < self.entries.len() => i + 1,
+                    Some(_) => self.entries.len() - 1,
+                    None => 0,
+                };
                 self.entry_state.select(Some(i));
             }
         }
@@ -183,13 +267,13 @@ impl App {
                 self.recompute_entries();
             }
             Focus::Entries => {
-                let Some(mut i) = self.entry_state.selected() else { return };
-                while i > 0 {
-                    i -= 1;
-                    if matches!(self.display_rows[i], EntryRow::Interval(_)) {
-                        break;
-                    }
+                if self.entries.is_empty() {
+                    return;
                 }
+                let i = match self.entry_state.selected() {
+                    Some(i) if i > 0 => i - 1,
+                    _ => 0,
+                };
                 self.entry_state.select(Some(i));
             }
         }
@@ -204,8 +288,8 @@ impl App {
                 }
             }
             Focus::Entries => {
-                if let Some(i) = self.display_rows.iter().position(|r| matches!(r, EntryRow::Interval(_))) {
-                    self.entry_state.select(Some(i));
+                if !self.entries.is_empty() {
+                    self.entry_state.select(Some(0));
                 }
             }
         }
@@ -220,45 +304,10 @@ impl App {
                 }
             }
             Focus::Entries => {
-                if let Some(i) = self.display_rows.iter().rposition(|r| matches!(r, EntryRow::Interval(_))) {
-                    self.entry_state.select(Some(i));
+                if !self.entries.is_empty() {
+                    self.entry_state.select(Some(self.entries.len() - 1));
                 }
             }
         }
     }
-
-    /// Total tracked duration for the currently selected period's entries.
-    pub fn total_duration(&self) -> chrono::Duration {
-        self.entries
-            .iter()
-            .fold(chrono::Duration::zero(), |acc, iv| acc + iv.duration())
-    }
-}
-
-/// Group entries (assumed sorted oldest-first) into per-day rows with a
-/// summary row appended after each day's entries.
-fn build_display_rows(entries: &[Interval]) -> Vec<EntryRow> {
-    let mut rows = Vec::with_capacity(entries.len() + 1);
-    let mut current: Option<NaiveDate> = None;
-    let mut day_total = chrono::Duration::zero();
-    let mut day_count = 0usize;
-
-    for iv in entries {
-        let d = iv.start.date_naive();
-        if current != Some(d) {
-            if let Some(prev) = current {
-                rows.push(EntryRow::DaySummary { date: prev, total: day_total, count: day_count });
-            }
-            current = Some(d);
-            day_total = chrono::Duration::zero();
-            day_count = 0;
-        }
-        day_total += iv.duration();
-        day_count += 1;
-        rows.push(EntryRow::Interval(iv.clone()));
-    }
-    if let Some(prev) = current {
-        rows.push(EntryRow::DaySummary { date: prev, total: day_total, count: day_count });
-    }
-    rows
 }
