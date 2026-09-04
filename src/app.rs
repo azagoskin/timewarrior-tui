@@ -45,6 +45,38 @@ pub struct InputState {
     pub action: InputAction,
     pub interval_id: u64,
     pub buffer: String,
+    /// Cursor position as a char index into `buffer` (0..=char count).
+    pub cursor: usize,
+}
+
+/// Byte offset in `buffer` for char index `cursor`, saturating at the end.
+fn byte_at(buffer: &str, cursor: usize) -> usize {
+    buffer
+        .char_indices()
+        .nth(cursor)
+        .map(|(b, _)| b)
+        .unwrap_or(buffer.len())
+}
+
+fn char_count(buffer: &str) -> usize {
+    buffer.chars().count()
+}
+
+/// Insert `c` at char position `cursor` and advance the cursor.
+fn buffer_insert(buffer: &mut String, cursor: &mut usize, c: char) {
+    let byte = byte_at(buffer, *cursor);
+    buffer.insert(byte, c);
+    *cursor += 1;
+}
+
+/// Delete the char before `cursor` (backspace) and move the cursor back.
+fn buffer_backspace(buffer: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    let byte = byte_at(buffer, *cursor - 1);
+    buffer.remove(byte);
+    *cursor -= 1;
 }
 
 /// Feedback shown to the user until the next key press.
@@ -66,6 +98,69 @@ pub fn tag_completion(buffer: &str, all_tags: &[String]) -> Option<String> {
         .iter()
         .find(|t| t.len() > prefix.len() && t.to_lowercase().starts_with(&lower))
         .map(|t| t[prefix.len()..].to_string())
+}
+
+/// Split a command line into arguments the way a shell would, honouring single
+/// and double quotes so that `annotate "some text"` yields one `some text`
+/// argument instead of two. Backslash escapes the next character. Unlike a real
+/// shell there is no variable expansion — this only groups quoted whitespace.
+pub fn shell_split(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut quote: Option<char> = None;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else if c == '\\' && q == '"' {
+                    // Inside double quotes a backslash escapes the next char.
+                    if let Some(&next) = chars.peek() {
+                        current.push(next);
+                        chars.next();
+                    } else {
+                        current.push(c);
+                    }
+                } else {
+                    current.push(c);
+                }
+            }
+            None => match c {
+                '\'' | '"' => {
+                    in_token = true;
+                    quote = Some(c);
+                }
+                '\\' => {
+                    in_token = true;
+                    if let Some(&next) = chars.peek() {
+                        current.push(next);
+                        chars.next();
+                    } else {
+                        current.push(c);
+                    }
+                }
+                c if c.is_whitespace() => {
+                    if in_token {
+                        args.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                }
+                _ => {
+                    in_token = true;
+                    current.push(c);
+                }
+            },
+        }
+    }
+
+    if in_token || quote.is_some() {
+        args.push(current);
+    }
+
+    args
 }
 
 fn next_index(len: usize, current: Option<usize>) -> usize {
@@ -106,6 +201,19 @@ pub struct App {
 
     pub focus: Focus,
     pub input: Option<InputState>,
+    /// When `Some`, the bottom pane is a raw `timew` command line holding this
+    /// buffer instead of showing the selected entry's details.
+    pub raw_command: Option<String>,
+    /// Cursor position as a char index into `raw_command`.
+    pub command_cursor: usize,
+    /// Previously submitted raw commands for this session, oldest first.
+    pub command_history: Vec<String>,
+    /// Position within `command_history` while browsing with the arrow keys;
+    /// `None` means the live (unsubmitted) buffer is showing.
+    history_pos: Option<usize>,
+    /// The in-progress buffer stashed when the user starts browsing history, so
+    /// arrowing back down restores what they had typed.
+    history_draft: String,
     pub message: Option<Message>,
     pub should_quit: bool,
 }
@@ -125,6 +233,11 @@ impl App {
             entry_state: TableState::default(),
             focus: Focus::Entries,
             input: None,
+            raw_command: None,
+            command_cursor: 0,
+            command_history: crate::history::load(),
+            history_pos: None,
+            history_draft: String::new(),
             message: None,
             should_quit: false,
         };
@@ -245,18 +358,43 @@ impl App {
             action,
             interval_id: iv.id,
             buffer: String::new(),
+            cursor: 0,
         });
     }
 
     pub fn input_push(&mut self, c: char) {
         if let Some(state) = &mut self.input {
-            state.buffer.push(c);
+            buffer_insert(&mut state.buffer, &mut state.cursor, c);
         }
     }
 
     pub fn input_backspace(&mut self) {
         if let Some(state) = &mut self.input {
-            state.buffer.pop();
+            buffer_backspace(&mut state.buffer, &mut state.cursor);
+        }
+    }
+
+    pub fn input_left(&mut self) {
+        if let Some(state) = &mut self.input {
+            state.cursor = state.cursor.saturating_sub(1);
+        }
+    }
+
+    pub fn input_right(&mut self) {
+        if let Some(state) = &mut self.input {
+            state.cursor = (state.cursor + 1).min(char_count(&state.buffer));
+        }
+    }
+
+    pub fn input_home(&mut self) {
+        if let Some(state) = &mut self.input {
+            state.cursor = 0;
+        }
+    }
+
+    pub fn input_end(&mut self) {
+        if let Some(state) = &mut self.input {
+            state.cursor = char_count(&state.buffer);
         }
     }
 
@@ -275,6 +413,7 @@ impl App {
         };
         if let Some(state) = &mut self.input {
             state.buffer.push_str(&suffix);
+            state.cursor = char_count(&state.buffer);
         }
     }
 
@@ -294,8 +433,9 @@ impl App {
         let result = match state.action {
             InputAction::Annotate => timew::run(&["annotate", &id_arg, text]),
             InputAction::Tag => {
+                let tokens = shell_split(text);
                 let mut args = vec!["tag", id_arg.as_str()];
-                args.extend(text.split_whitespace());
+                args.extend(tokens.iter().map(String::as_str));
                 timew::run(&args)
             }
             InputAction::Lengthen => timew::run(&["lengthen", &id_arg, text]),
@@ -317,6 +457,151 @@ impl App {
                     "{} failed: {e}",
                     state.action.verb()
                 )));
+            }
+        }
+    }
+
+    /// Open the raw command line in the bottom pane.
+    pub fn start_raw_command(&mut self) {
+        self.input = None;
+        self.raw_command = Some(String::new());
+        self.command_cursor = 0;
+        self.history_pos = None;
+        self.history_draft.clear();
+    }
+
+    pub fn raw_command_push(&mut self, c: char) {
+        if let Some(buffer) = &mut self.raw_command {
+            buffer_insert(buffer, &mut self.command_cursor, c);
+        }
+    }
+
+    pub fn raw_command_backspace(&mut self) {
+        if let Some(buffer) = &mut self.raw_command {
+            buffer_backspace(buffer, &mut self.command_cursor);
+        }
+    }
+
+    pub fn raw_command_left(&mut self) {
+        self.command_cursor = self.command_cursor.saturating_sub(1);
+    }
+
+    pub fn raw_command_right(&mut self) {
+        if let Some(buffer) = &self.raw_command {
+            self.command_cursor = (self.command_cursor + 1).min(char_count(buffer));
+        }
+    }
+
+    pub fn raw_command_home(&mut self) {
+        self.command_cursor = 0;
+    }
+
+    pub fn raw_command_end(&mut self) {
+        if let Some(buffer) = &self.raw_command {
+            self.command_cursor = char_count(buffer);
+        }
+    }
+
+    /// Recall the previous command in history (bound to Up arrow).
+    pub fn raw_command_history_prev(&mut self) {
+        if self.raw_command.is_none() || self.command_history.is_empty() {
+            return;
+        }
+        let pos = match self.history_pos {
+            // First step into history: stash the live draft first.
+            None => {
+                self.history_draft = self.raw_command.clone().unwrap_or_default();
+                self.command_history.len() - 1
+            }
+            Some(0) => 0,
+            Some(i) => i - 1,
+        };
+        self.history_pos = Some(pos);
+        self.raw_command = Some(self.command_history[pos].clone());
+        self.command_cursor = char_count(&self.command_history[pos]);
+    }
+
+    /// Move forward toward the live draft in history (bound to Down arrow).
+    pub fn raw_command_history_next(&mut self) {
+        if self.raw_command.is_none() {
+            return;
+        }
+        match self.history_pos {
+            None => {}
+            Some(i) if i + 1 < self.command_history.len() => {
+                self.history_pos = Some(i + 1);
+                self.raw_command = Some(self.command_history[i + 1].clone());
+                self.command_cursor = char_count(&self.command_history[i + 1]);
+            }
+            Some(_) => {
+                // Past the newest entry: restore the stashed draft.
+                self.history_pos = None;
+                let draft = std::mem::take(&mut self.history_draft);
+                self.command_cursor = char_count(&draft);
+                self.raw_command = Some(draft);
+            }
+        }
+    }
+
+    pub fn raw_command_cancel(&mut self) {
+        self.raw_command = None;
+    }
+
+    /// Complete the tag currently being typed in the raw command line.
+    pub fn raw_command_autocomplete(&mut self) {
+        let Some(buffer) = &self.raw_command else {
+            return;
+        };
+        let Some(suffix) = tag_completion(buffer, &self.all_tags) else {
+            return;
+        };
+        if let Some(buffer) = &mut self.raw_command {
+            buffer.push_str(&suffix);
+            self.command_cursor = char_count(buffer);
+        }
+    }
+
+    /// Run the raw command line as a `timew` invocation. A leading `timew`
+    /// token is optional, so both "tag X @1" and "timew tag X @1" work.
+    pub fn raw_command_submit(&mut self) {
+        let Some(buffer) = self.raw_command.take() else {
+            return;
+        };
+        self.history_pos = None;
+        self.history_draft.clear();
+        let text = buffer.trim();
+
+        // Vim-style quit: `:q` (and `:quit`) exit the app.
+        if matches!(text, "q" | "quit") {
+            self.should_quit = true;
+            return;
+        }
+
+        let mut args: Vec<String> = shell_split(text);
+        if args.first().map(String::as_str) == Some("timew") {
+            args.remove(0);
+        }
+        if args.is_empty() {
+            self.message = Some(Message::Error("Empty command, nothing done".to_string()));
+            return;
+        }
+
+        // Record the command in history (skip exact repeats of the most recent
+        // entry to avoid clutter). Persist it too, so it survives restarts.
+        let trimmed = text.to_string();
+        if self.command_history.last() != Some(&trimmed) {
+            crate::history::append(&trimmed);
+            self.command_history.push(trimmed);
+        }
+
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        match timew::run(&args) {
+            Ok(()) => {
+                self.message = Some(Message::Ok(format!("timew {} succeeded", args.join(" "))));
+                self.refresh();
+            }
+            Err(e) => {
+                self.message = Some(Message::Error(format!("Command failed: {e}")));
             }
         }
     }
@@ -410,5 +695,35 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_split;
+
+    #[test]
+    fn splits_plain_words() {
+        assert_eq!(shell_split("annotate @1 hello"), ["annotate", "@1", "hello"]);
+    }
+
+    #[test]
+    fn keeps_double_quoted_text_together() {
+        assert_eq!(
+            shell_split("annotate @1 \"some text\""),
+            ["annotate", "@1", "some text"]
+        );
+    }
+
+    #[test]
+    fn keeps_single_quoted_text_together() {
+        assert_eq!(shell_split("tag @1 'in progress'"), ["tag", "@1", "in progress"]);
+    }
+
+    #[test]
+    fn handles_escaped_and_unterminated_quotes() {
+        assert_eq!(shell_split(r#"a "b\"c""#), ["a", "b\"c"]);
+        assert_eq!(shell_split("a \"unterminated"), ["a", "unterminated"]);
+        assert!(shell_split("   ").is_empty());
     }
 }

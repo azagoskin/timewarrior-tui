@@ -1,4 +1,5 @@
 mod app;
+mod history;
 mod period;
 mod timew;
 mod ui;
@@ -35,7 +36,29 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                         KeyCode::Enter => app.input_submit(),
                         KeyCode::Backspace => app.input_backspace(),
                         KeyCode::Tab => app.input_autocomplete(),
+                        KeyCode::Left => app.input_left(),
+                        KeyCode::Right => app.input_right(),
+                        KeyCode::Home => app.input_home(),
+                        KeyCode::End => app.input_end(),
                         KeyCode::Char(c) => app.input_push(c),
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if app.raw_command.is_some() {
+                    match key.code {
+                        KeyCode::Esc => app.raw_command_cancel(),
+                        KeyCode::Enter => app.raw_command_submit(),
+                        KeyCode::Backspace => app.raw_command_backspace(),
+                        KeyCode::Tab => app.raw_command_autocomplete(),
+                        KeyCode::Up => app.raw_command_history_prev(),
+                        KeyCode::Down => app.raw_command_history_next(),
+                        KeyCode::Left => app.raw_command_left(),
+                        KeyCode::Right => app.raw_command_right(),
+                        KeyCode::Home => app.raw_command_home(),
+                        KeyCode::End => app.raw_command_end(),
+                        KeyCode::Char(c) => app.raw_command_push(c),
                         _ => {}
                     }
                     continue;
@@ -43,7 +66,6 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
 
                 app.clear_message();
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
                     KeyCode::Char('1') => app.set_mode(Mode::Day),
                     KeyCode::Char('2') => app.set_mode(Mode::Week),
                     KeyCode::Char('3') => app.set_mode(Mode::Month),
@@ -63,6 +85,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('s') => app.start_input(InputAction::Shorten),
                     KeyCode::Char('m') => app.start_input(InputAction::Move),
                     KeyCode::Char('p') => app.split_selected(),
+                    KeyCode::Char(':') => app.start_raw_command(),
                     _ => {}
                 }
             }

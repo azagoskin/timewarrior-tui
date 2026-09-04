@@ -116,7 +116,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_periods(frame, app, body[0]);
     draw_table(frame, app, body[1]);
-    draw_details(frame, app, inner[1]);
+    if app.raw_command.is_some() {
+        draw_command(frame, app, inner[1]);
+    } else {
+        draw_details(frame, app, inner[1]);
+    }
 
     if let Some(input) = &app.input {
         draw_input_popup(frame, frame.area(), input, &app.all_tags);
@@ -138,6 +142,53 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
+/// Build the spans for an editable line: the text so far, a reversed-video
+/// block cursor at char index `cursor`, and a dimmed completion `suggestion`.
+fn buffer_spans<'a>(buffer: &'a str, cursor: usize, suggestion: Option<&'a str>) -> Vec<Span<'a>> {
+    let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
+    let dim = Style::default().fg(Color::DarkGray);
+    let split = buffer
+        .char_indices()
+        .nth(cursor)
+        .map(|(b, _)| b)
+        .unwrap_or(buffer.len());
+    let (before, rest) = buffer.split_at(split);
+
+    let mut spans = Vec::new();
+    if !before.is_empty() {
+        spans.push(Span::raw(before));
+    }
+
+    let mut rest_chars = rest.chars();
+    match rest_chars.next() {
+        // Cursor sits on an existing character: highlight it.
+        Some(c) => {
+            spans.push(Span::styled(c.to_string(), cursor_style));
+            let tail: String = rest_chars.collect();
+            if !tail.is_empty() {
+                spans.push(Span::raw(tail));
+            }
+            if let Some(s) = suggestion {
+                spans.push(Span::styled(s.to_string(), dim));
+            }
+        }
+        // Cursor is past the end: highlight the first suggested char, or a blank.
+        None => match suggestion {
+            Some(s) if !s.is_empty() => {
+                let mut sc = s.chars();
+                let first = sc.next().unwrap();
+                spans.push(Span::styled(first.to_string(), cursor_style.fg(Color::DarkGray)));
+                let stail: String = sc.collect();
+                if !stail.is_empty() {
+                    spans.push(Span::styled(stail, dim));
+                }
+            }
+            _ => spans.push(Span::styled(" ", cursor_style)),
+        },
+    }
+    spans
+}
+
 fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState, all_tags: &[String]) {
     let popup = centered_rect(60, 4, area);
     frame.render_widget(Clear, popup);
@@ -148,16 +199,12 @@ fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState, all_tags:
         None
     };
 
-    let mut first_line = vec![
-        Span::styled("> ", Style::default().fg(Color::Yellow)),
-        Span::raw(input.buffer.as_str()),
-    ];
-    if let Some(suffix) = &suggestion {
-        first_line.push(Span::styled(
-            suffix.clone(),
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
+    let mut first_line = vec![Span::styled("> ", Style::default().fg(Color::Yellow))];
+    first_line.extend(buffer_spans(
+        &input.buffer,
+        input.cursor,
+        suggestion.as_deref(),
+    ));
 
     let hint = if suggestion.is_some() {
         "Enter: submit   Tab: autocomplete   Esc: cancel"
@@ -247,13 +294,14 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         line("s", "shorten the interval (timew shorten)"),
         line("m", "move the interval (timew move)"),
         line("p", "split the interval in two (timew split)"),
+        line(":", "run a raw timew command (e.g. tag X @1 @2)"),
         Line::from(""),
         Line::from(Span::styled(
             "Other",
             Style::default().add_modifier(Modifier::BOLD),
         )),
         line("r", "refresh data from timew"),
-        line("q / Esc", "quit"),
+        line(":q", "quit"),
     ];
 
     let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
@@ -457,4 +505,41 @@ fn draw_details(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
+}
+
+/// Render the raw `timew` command line in the bottom pane.
+fn draw_command(frame: &mut Frame, app: &App, area: Rect) {
+    let buffer = app.raw_command.as_deref().unwrap_or_default();
+
+    let suggestion = app::tag_completion(buffer, &app.all_tags);
+
+    let mut cmd_line = vec![
+        Span::styled("timew ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", Style::default().fg(Color::Yellow)),
+    ];
+    cmd_line.extend(buffer_spans(
+        buffer,
+        app.command_cursor,
+        suggestion.as_deref(),
+    ));
+
+    let hint = if suggestion.is_some() {
+        "Enter: run   Tab: autocomplete   ↑↓: history   Esc: cancel        e.g. tag SOMETAG @1 @2"
+    } else {
+        "Enter: run   ↑↓: history   Esc: cancel        e.g. annotate @1 \"some text\""
+    };
+
+    let text = vec![
+        Line::from(""),
+        Line::from(cmd_line),
+        Line::from(""),
+        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(" Command ");
+
+    frame.render_widget(Paragraph::new(text).block(block), area);
 }

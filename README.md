@@ -12,6 +12,7 @@ A Terminal User Interface (TUI) for [Timewarrior](https://timewarrior.net/), mod
 - day / week / month / year views, with a period picker on the left
 - entries grouped by day, with per-day totals
 - edit entries without leaving the terminal: annotate, tag, lengthen, shorten, move, split
+- run any raw `timew` command from a command line (`:`)
 - tag autocomplete
 - colors based on timewarrior tags; active interval highlighted
 
@@ -34,9 +35,15 @@ immediately, with no prompt:
 | `s` | shorten             | `timew shorten @id <duration>`              |
 | `m` | move                | `timew move @id <date>`                     |
 | `p` | split in two        | `timew split @id`                           |
+| `:` | raw command         | any `timew` command, e.g. `tag SOMETAG @1 @2` |
 
 While typing a tag, `Tab` autocompletes it against tags already used
 elsewhere in your history (shown as a grey suggestion as you type).
+
+`:` turns the bottom pane into a raw command line where you can type any
+`timew` invocation (the leading `timew` is optional) and run it with
+`Enter`. This is the escape hatch for anything the dedicated keys above
+don't cover — e.g. tagging several intervals at once with `tag SOMETAG @1 @2`.
 
 Press `Enter` to submit or `Esc` to cancel. On success the data is reloaded
 from timew, the row you were on stays selected, and a confirmation is
