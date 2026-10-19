@@ -190,32 +190,86 @@ fn buffer_spans<'a>(buffer: &'a str, cursor: usize, suggestion: Option<&'a str>)
 }
 
 fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState, all_tags: &[String]) {
-    let popup = centered_rect(60, 4, area);
-    frame.render_widget(Clear, popup);
-
     let suggestion = if input.action == InputAction::Tag {
         app::tag_completion(&input.buffer, all_tags)
     } else {
         None
     };
 
-    let mut first_line = vec![Span::styled("> ", Style::default().fg(Color::Yellow))];
-    first_line.extend(buffer_spans(
-        &input.buffer,
-        input.cursor,
-        suggestion.as_deref(),
-    ));
+    // Fixed popup width; the text wraps onto new lines instead of scrolling
+    // horizontally, so the whole annotation stays visible as it grows.
+    let width = 60u16.min(area.width);
+    // Columns available for the text itself: popup width minus the two borders
+    // and the two-column "> " / "  " prefix.
+    let text_width = (width as usize).saturating_sub(4).max(1);
+
+    let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
+    let dim = Style::default().fg(Color::DarkGray);
+    let normal = Style::default();
+
+    // Lay the buffer (plus cursor and any dim suggestion) out as a flat list of
+    // styled cells, then wrap it into lines of `text_width` columns below.
+    let mut cells: Vec<(char, Style)> = Vec::new();
+    let n = input.buffer.chars().count();
+    for (i, ch) in input.buffer.chars().enumerate() {
+        cells.push((ch, if i == input.cursor { cursor_style } else { normal }));
+    }
+    let cursor_at_end = input.cursor >= n;
+    match suggestion.as_deref() {
+        Some(s) if !s.is_empty() => {
+            let mut chars = s.chars();
+            let first = chars.next().unwrap();
+            let first_style = if cursor_at_end {
+                cursor_style.fg(Color::DarkGray)
+            } else {
+                dim
+            };
+            cells.push((first, first_style));
+            for c in chars {
+                cells.push((c, dim));
+            }
+        }
+        _ if cursor_at_end => cells.push((' ', cursor_style)),
+        _ => {}
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (li, chunk) in cells.chunks(text_width).enumerate() {
+        let prefix = if li == 0 {
+            Span::styled("> ", Style::default().fg(Color::Yellow))
+        } else {
+            Span::raw("  ")
+        };
+        let mut spans = vec![prefix];
+        // Merge runs of same-styled cells into single spans.
+        let mut i = 0;
+        while i < chunk.len() {
+            let style = chunk[i].1;
+            let mut text = String::new();
+            text.push(chunk[i].0);
+            let mut j = i + 1;
+            while j < chunk.len() && chunk[j].1 == style {
+                text.push(chunk[j].0);
+                j += 1;
+            }
+            spans.push(Span::styled(text, style));
+            i = j;
+        }
+        lines.push(Line::from(spans));
+    }
 
     let hint = if suggestion.is_some() {
         "Enter: submit   Tab: autocomplete   Esc: cancel"
     } else {
         "Enter: submit   Esc: cancel"
     };
+    lines.push(Line::from(Span::styled(hint, dim)));
 
-    let text = vec![
-        Line::from(first_line),
-        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
-    ];
+    // Grow the popup to fit the wrapped lines plus the hint, within the area.
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let popup = centered_rect(width, height, area);
+    frame.render_widget(Clear, popup);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow))
@@ -225,7 +279,7 @@ fn draw_input_popup(frame: &mut Frame, area: Rect, input: &InputState, all_tags:
             input.interval_id
         ));
 
-    frame.render_widget(Paragraph::new(text).block(block), popup);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 fn draw_message_popup(frame: &mut Frame, area: Rect, message: &Message) {
