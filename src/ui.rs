@@ -348,6 +348,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         line("s", "shorten the interval (timew shorten)"),
         line("m", "move the interval (timew move)"),
         line("p", "split the interval in two (timew split)"),
+        line("n", "new interval right after this one (enter a duration)"),
+        line("d", "delete the interval (press d again to confirm)"),
         line(":", "run a raw timew command (e.g. tag X @1 @2)"),
         Line::from(""),
         Line::from(Span::styled(

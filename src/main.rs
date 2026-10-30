@@ -65,6 +65,10 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                 }
 
                 app.clear_message();
+                // Any key other than `d` cancels a pending delete confirmation.
+                if !matches!(key.code, KeyCode::Char('d')) {
+                    app.cancel_pending_delete();
+                }
                 match key.code {
                     KeyCode::Char('1') => app.set_mode(Mode::Day),
                     KeyCode::Char('2') => app.set_mode(Mode::Week),
@@ -85,6 +89,8 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('s') => app.start_input(InputAction::Shorten),
                     KeyCode::Char('m') => app.start_input(InputAction::Move),
                     KeyCode::Char('p') => app.split_selected(),
+                    KeyCode::Char('n') => app.start_new_after(),
+                    KeyCode::Char('d') => app.delete_selected(),
                     KeyCode::Char(':') => app.start_raw_command(),
                     _ => {}
                 }

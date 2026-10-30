@@ -16,6 +16,9 @@ pub enum InputAction {
     Lengthen,
     Shorten,
     Move,
+    /// Create a new interval immediately after the selected one, lasting for
+    /// the entered duration.
+    NewAfter,
 }
 
 impl InputAction {
@@ -26,6 +29,7 @@ impl InputAction {
             InputAction::Lengthen => "Lengthen by",
             InputAction::Shorten => "Shorten by",
             InputAction::Move => "Move to",
+            InputAction::NewAfter => "Duration (e.g. 1h30m)",
         }
     }
 
@@ -36,8 +40,81 @@ impl InputAction {
             InputAction::Lengthen => "Lengthen",
             InputAction::Shorten => "Shorten",
             InputAction::Move => "Move",
+            InputAction::NewAfter => "New interval",
         }
     }
+}
+
+/// Parse a human duration into a [`chrono::Duration`]. Supports a clock form
+/// (`1:30`, `1:30:00`) and a sequence of `<number><unit>` tokens such as
+/// `90m`, `1.5h`, `1h30m`. A bare number is interpreted as minutes. Returns
+/// `None` for anything unparseable or non-positive.
+pub fn parse_duration(input: &str) -> Option<chrono::Duration> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Clock form: HH:MM or HH:MM:SS
+    if s.contains(':') {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() < 2 || parts.len() > 3 {
+            return None;
+        }
+        let nums: Option<Vec<i64>> = parts.iter().map(|p| p.parse::<i64>().ok()).collect();
+        let nums = nums?;
+        if nums.iter().any(|&n| n < 0) {
+            return None;
+        }
+        let (h, m, sec) = match nums.as_slice() {
+            [h, m] => (*h, *m, 0),
+            [h, m, s] => (*h, *m, *s),
+            _ => return None,
+        };
+        let total = h * 3600 + m * 60 + sec;
+        return (total > 0).then(|| chrono::Duration::seconds(total));
+    }
+
+    // Token form: one or more <number><unit> pairs.
+    let mut total_secs = 0f64;
+    let mut chars = s.chars().peekable();
+    let mut saw_token = false;
+    while chars.peek().is_some() {
+        let mut num = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() || c == '.' {
+                num.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let value: f64 = num.parse().ok()?;
+
+        let mut unit = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_alphabetic() {
+                unit.push(c.to_ascii_lowercase());
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let mult = match unit.as_str() {
+            "" => 60.0, // bare number => minutes
+            "s" | "sec" | "secs" | "second" | "seconds" => 1.0,
+            "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
+            "d" | "day" | "days" => 86400.0,
+            "w" | "wk" | "wks" | "week" | "weeks" => 604800.0,
+            _ => return None,
+        };
+        total_secs += value * mult;
+        saw_token = true;
+    }
+
+    let secs = total_secs.round() as i64;
+    (saw_token && secs > 0).then(|| chrono::Duration::seconds(secs))
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +291,9 @@ pub struct App {
     /// The in-progress buffer stashed when the user starts browsing history, so
     /// arrowing back down restores what they had typed.
     history_draft: String,
+    /// When `Some(id)`, a delete of interval `@id` has been requested and is
+    /// awaiting confirmation (a second `d` press on the same entry).
+    pub pending_delete: Option<u64>,
     pub message: Option<Message>,
     pub should_quit: bool,
 }
@@ -238,6 +318,7 @@ impl App {
             command_history: crate::history::load(),
             history_pos: None,
             history_draft: String::new(),
+            pending_delete: None,
             message: None,
             should_quit: false,
         };
@@ -362,6 +443,28 @@ impl App {
         });
     }
 
+    /// Open the duration prompt to create a new interval right after the
+    /// selected one. Rejected if nothing is selected or the selection is still
+    /// active (has no end to append after).
+    pub fn start_new_after(&mut self) {
+        let Some(iv) = self.selected_entry() else {
+            self.message = Some(Message::Error("No entry selected".to_string()));
+            return;
+        };
+        if iv.end.is_none() {
+            self.message = Some(Message::Error(
+                "Cannot create after an active (open) interval".to_string(),
+            ));
+            return;
+        }
+        self.input = Some(InputState {
+            action: InputAction::NewAfter,
+            interval_id: iv.id,
+            buffer: String::new(),
+            cursor: 0,
+        });
+    }
+
     pub fn input_push(&mut self, c: char) {
         if let Some(state) = &mut self.input {
             buffer_insert(&mut state.buffer, &mut state.cursor, c);
@@ -441,6 +544,25 @@ impl App {
             InputAction::Lengthen => timew::run(&["lengthen", &id_arg, text]),
             InputAction::Shorten => timew::run(&["shorten", &id_arg, text]),
             InputAction::Move => timew::run(&["move", &id_arg, text]),
+            InputAction::NewAfter => {
+                let start = self
+                    .all_intervals
+                    .iter()
+                    .find(|iv| iv.id == state.interval_id)
+                    .and_then(|iv| iv.end);
+                match (start, parse_duration(text)) {
+                    (None, _) => Err("selected interval is gone or still active".to_string()),
+                    (_, None) => Err(format!("could not parse duration '{text}'")),
+                    (Some(start), Some(dur)) => {
+                        let end = start + dur;
+                        // timew reads naive datetimes as local time.
+                        let fmt = "%Y-%m-%dT%H:%M:%S";
+                        let start_s = start.format(fmt).to_string();
+                        let end_s = end.format(fmt).to_string();
+                        timew::run(&["track", &start_s, "-", &end_s])
+                    }
+                }
+            }
         };
 
         match result {
@@ -625,6 +747,44 @@ impl App {
         }
     }
 
+    /// Delete the selected entry (timew delete). The first press requests
+    /// confirmation; a second `d` on the same entry carries it out.
+    pub fn delete_selected(&mut self) {
+        let Some(iv) = self.selected_entry() else {
+            self.pending_delete = None;
+            self.message = Some(Message::Error("No entry selected".to_string()));
+            return;
+        };
+        let id = iv.id;
+
+        if self.pending_delete != Some(id) {
+            // First press (or a different entry): ask for confirmation.
+            self.pending_delete = Some(id);
+            self.message = Some(Message::Ok(format!(
+                "Press d again to delete @{id} (any other key cancels)"
+            )));
+            return;
+        }
+
+        // Confirmed.
+        self.pending_delete = None;
+        let id_arg = format!("@{id}");
+        match timew::run(&["delete", &id_arg]) {
+            Ok(()) => {
+                self.message = Some(Message::Ok(format!("Deleted {id_arg}")));
+                self.refresh();
+            }
+            Err(e) => {
+                self.message = Some(Message::Error(format!("Delete failed: {e}")));
+            }
+        }
+    }
+
+    /// Clear a pending delete confirmation (any key other than `d` cancels it).
+    pub fn cancel_pending_delete(&mut self) {
+        self.pending_delete = None;
+    }
+
     pub fn next(&mut self) {
         match self.focus {
             Focus::Periods => {
@@ -700,7 +860,33 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::shell_split;
+    use super::{parse_duration, shell_split};
+
+    fn secs(s: &str) -> Option<i64> {
+        parse_duration(s).map(|d| d.num_seconds())
+    }
+
+    #[test]
+    fn parses_duration_forms() {
+        assert_eq!(secs("30"), Some(30 * 60)); // bare number => minutes
+        assert_eq!(secs("90m"), Some(90 * 60));
+        assert_eq!(secs("45min"), Some(45 * 60));
+        assert_eq!(secs("1.5h"), Some(5400));
+        assert_eq!(secs("1h30m"), Some(5400));
+        assert_eq!(secs("2h"), Some(7200));
+        assert_eq!(secs("15s"), Some(15));
+        assert_eq!(secs("1:30"), Some(5400));
+        assert_eq!(secs("1:30:15"), Some(5415));
+    }
+
+    #[test]
+    fn rejects_bad_durations() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("0"), None);
+        assert_eq!(parse_duration("abc"), None);
+        assert_eq!(parse_duration("3mo"), None); // 'mo' not a supported unit here
+        assert_eq!(parse_duration("1:2:3:4"), None);
+    }
 
     #[test]
     fn splits_plain_words() {

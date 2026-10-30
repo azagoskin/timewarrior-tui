@@ -44,6 +44,9 @@ fn parse_timew_datetime(s: &str) -> Result<DateTime<Local>> {
 pub fn export() -> Result<Vec<Interval>> {
     let output = Command::new("timew")
         .arg("export")
+        // Override any `debug` setting from the user's config; with debug on,
+        // timewarrior prepends a CLI parser dump to stdout that breaks JSON parsing.
+        .arg("rc.debug=0")
         .output()
         .context("failed to run `timew`; is timewarrior installed and on PATH?")?;
 
@@ -53,7 +56,13 @@ pub fn export() -> Result<Vec<Interval>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let raw: Vec<RawInterval> = serde_json::from_str(&stdout)
+    // Be resilient to any leading non-JSON noise (e.g. a debug dump) by starting
+    // at the first `[` — the export is always a JSON array.
+    let json = match stdout.find('[') {
+        Some(i) => &stdout[i..],
+        None => &stdout,
+    };
+    let raw: Vec<RawInterval> = serde_json::from_str(json)
         .with_context(|| format!("failed to parse timew export JSON: {stdout}"))?;
 
     let mut intervals = Vec::with_capacity(raw.len());
